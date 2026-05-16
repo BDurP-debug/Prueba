@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Air Hockey Legends</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background-color: #0d0e15;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px #00f2fe;
+            color: #00f2fe;
+        }
+
+        #scoreboard {
+            display: flex;
+            gap: 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px 30px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .score {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #player-score { color: #00f2fe; text-shadow: 0 0 8px #00f2fe; }
+        #cpu-score { color: #ff007f; text-shadow: 0 0 8px #ff007f; }
+
+        .score-val {
+            font-size: 2.5rem;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 242, 254, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            background: #141622;
+            display: block;
+            cursor: none; /* Oculta el mouse dentro de la mesa */
+        }
+
+        /* Pantallas superpuestas (Inicio y Fin) */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(13, 14, 21, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            transition: opacity 0.3s ease;
+            z-index: 10;
+        }
+
+        .overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            color: #0d0e15;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4);
+            transition: transform 0.1s, box-shadow 0.2s;
+            text-transform: uppercase;
+        }
+
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(0, 242, 254, 0.6);
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        #winnerText {
+            font-size: 2.5rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Neon Air Hockey</h1>
+
+    <div id="scoreboard">
+        <div class="score">
+            <span>TÚ</span>
+            <span id="player-score" class="score-val">0</span>
+        </div>
+        <div class="score">
+            <span>RIVAL AI</span>
+            <span id="cpu-score" class="score-val">0</span>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <!-- Pantalla de Inicio -->
+        <div id="start-screen" class="overlay">
+            <h2 style="font-size: 2rem; color: #00f2fe; text-align:center;">¡Mueve tu mazo y anota 7 goles para ganar!</h2>
+            <button class="btn" onclick="startGame()">Jugar</button>
+        </div>
+
+        <!-- Pantalla de Fin de Juego -->
+        <div id="game-over-screen" class="overlay hidden">
+            <div id="winnerText"></div>
+            <button class="btn" onclick="resetGame()">Reiniciar</button>
+        </div>
+
+        <canvas id="hockeyCourt" width="450" height="650"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('hockeyCourt');
+        const ctx = canvas.getContext('2d');
+        const playerScoreEl = document.getElementById('player-score');
+        const cpuScoreEl = document.getElementById('cpu-score');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const winnerText = document.getElementById('winnerText');
+
+        // Configuraciones de juego
+        let playerScore = 0;
+        let cpuScore = 0;
+        const maxScore = 7;
+        let gameRunning = false;
+
+        // Dimensiones físicas de los elementos
+        const malletRadius = 25;
+        const puckRadius = 16;
+        const goalWidth = 140;
+
+        // Entidades
+        const player = { x: canvas.width / 2, y: canvas.height * 0.85, score: 0 };
+        const cpu = { x: canvas.width / 2, y: canvas.height * 0.15, speed: 4.5 };
+        const puck = { x: canvas.width / 2, y: canvas.height / 2, vx: 0, vy: 0, maxSpeed: 12 };
+
+        // Input tracking para lag y suavizado táctil/mouse
+        let targetX = player.x;
+        let targetY = player.y;
+
+        // Listeners de movimiento
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            targetX = e.clientX - rect.left;
+            targetY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault(); // Evita scroll en móviles
+            if(e.touches.length > 0) {
+                const rect = canvas.getBoundingClientRect();
+                targetX = e.touches[0].clientX - rect.left;
+                targetY = e.touches[0].clientY - rect.top;
+            }
+        }, { passive: false });
+
+        function startGame() {
+            startScreen.classList.add('hidden');
+            gameRunning = true;
+            resetPuck(1);
+            loop();
+        }
+
+        function resetPuck(direction) {
+            puck.x = canvas.width / 2;
+            puck.y = canvas.height / 2;
+            puck.vx = (Math.random() - 0.5) * 4;
+            puck.vy = direction * 5; // Se lanza hacia quien recibió el gol
+        }
+
+        // Detecta colisión circular y calcula rebote físico básico
+        function handleCollision(mallet, isCpu) {
+            let dx = puck.x - mallet.x;
+            let dy = puck.y - mallet.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            let minDistance = malletRadius + puckRadius;
+
+            if (distance < minDistance) {
+                // Empujar el disco fuera del mazo para que no se peguen
+                let angle = Math.atan2(dy, dx);
+                puck.x = mallet.x + Math.cos(angle) * minDistance;
+                puck.y = mallet.y + Math.sin(angle) * minDistance;
+
+                // Transferir velocidad basada en el impacto
+                puck.vx = Math.cos(angle) * (Math.abs(puck.vx) + 3);
+                puck.vy = Math.sin(angle) * (Math.abs(puck.vy) + 3);
+
+                // Si es la IA, añadir un pequeño empuje vertical extra hacia adelante
+                if (isCpu) puck.vy += 2; 
+                else puck.vy -= 2;
+
+                // Limitar velocidad máxima
+                puck.vx = Math.max(-puck.maxSpeed, Math.min(puck.maxSpeed, puck.vx));
+                puck.vy = Math.max(-puck.maxSpeed, Math.min(puck.maxSpeed, puck.vy));
+            }
+        }
+
+        function update() {
+            if (!gameRunning) return;
+
+            // --- Lógica del Jugador (Restringido a su media cancha) ---
+            player.x = targetX;
+            player.y = targetY;
+
+            // Límites del mazo del jugador
+            if (player.x < malletRadius) player.x = malletRadius;
+            if (player.x > canvas.width - malletRadius) player.x = canvas.width - malletRadius;
+            if (player.y < canvas.height / 2 + malletRadius) player.y = canvas.height / 2 + malletRadius;
+            if (player.y > canvas.height - malletRadius) player.y = canvas.height - malletRadius;
+
+            // --- Lógica de la Inteligencia Artificial (CPU) ---
+            // La IA sigue al disco sólo si está en su lado de la cancha o cerca del centro
+            let cpuTargetX = canvas.width / 2;
+            if (puck.y < canvas.height * 0.65) {
+                cpuTargetX = puck.x;
+            }
+
+            // Movimiento fluido de la IA hacia su objetivo
+            if (cpu.x < cpuTargetX) cpu.x += cpu.speed;
+            else if (cpu.x > cpuTargetX) cpu.x -= cpu.speed;
+
+            // Movimiento vertical básico de la IA para atacar el disco
+            let cpuTargetY = canvas.height * 0.15;
+            if(puck.y < canvas.height / 2 && puck.y > canvas.height * 0.1) {
+                cpuTargetY = puck.y - 20;
+            }
+            if (cpu.y < cpuTargetY) cpu.y += cpu.speed / 1.5;
+            else if (cpu.y > cpuTargetY) cpu.y -= cpu.speed / 1.5;
+
+            // Límites de la IA
+            if (cpu.x < malletRadius) cpu.x = malletRadius;
+            if (cpu.x > canvas.width - malletRadius) cpu.x = canvas.width - malletRadius;
+            if (cpu.y < malletRadius) cpu.y = malletRadius;
+            if (cpu.y > canvas.height / 2 - malletRadius) cpu.y = canvas.height / 2 - malletRadius;
+
+            // --- Movimiento del Disco ---
+            puck.x += puck.vx;
+            puck.y += puck.vy;
+
+            // Fricción ambiental muy leve para simular el aire de la mesa
+            puck.vx *= 0.995;
+            puck.vy *= 0.995;
+
+            // --- Colisiones con Paredes Laterales ---
+            if (puck.x - puckRadius < 0) {
+                puck.x = puckRadius;
+                puck.vx = -puck.vx * 0.9;
+            } else if (puck.x + puckRadius > canvas.width) {
+                puck.x = canvas.width - puckRadius;
+                puck.vx = -puck.vx * 0.9;
+            }
+
+            // --- Lógica de Porterías / Goles ---
+            const inGoalX = (puck.x > (canvas.width - goalWidth) / 2) && (puck.x < (canvas.width + goalWidth) / 2);
+
+            if (puck.y - puckRadius < 0) {
+                if (inGoalX) {
+                    playerScore++;
+                    playerScoreEl.textContent = playerScore;
+                    checkGameOver();
+                    if(gameRunning) resetPuck(-1);
+                } else {
+                    puck.y = puckRadius;
+                    puck.vy = -puck.vy * 0.9;
+                }
+            } else if (puck.y + puckRadius > canvas.height) {
+                if (inGoalX) {
+                    cpuScore++;
+                    cpuScoreEl.textContent = cpuScore;
+                    checkGameOver();
+                    if(gameRunning) resetPuck(1);
+                } else {
+                    puck.y = canvas.height - puckRadius;
+                    puck.vy = -puck.vy * 0.9;
+                }
+            }
+
+            // --- Procesar Choques entre Mazos y Disco ---
+            handleCollision(player, false);
+            handleCollision(cpu, true);
+        }
+
+        function checkGameOver() {
+            if (playerScore >= maxScore || cpuScore >= maxScore) {
+                gameRunning = false;
+                gameOverScreen.classList.remove('hidden');
+                if (playerScore >= maxScore) {
+                    winnerText.textContent = "¡Ganaste la partida! 🏆";
+                    winnerText.style.color = "#00f2fe";
+                } else {
+                    winnerText.textContent = "¡La IA ha ganado! 🤖";
+                    winnerText.style.color = "#ff007f";
+                }
+            }
+        }
+
+        function resetGame() {
+            playerScore = 0;
+            cpuScore = 0;
+            playerScoreEl.textContent = "0";
+            cpuScoreEl.textContent = "0";
+            player.x = canvas.width / 2;
+            player.y = canvas.height * 0.85;
+            cpu.x = canvas.width / 2;
+            cpu.y = canvas.height * 0.15;
+            gameOverScreen.classList.add('hidden');
+            gameRunning = true;
+            resetPuck(1);
+        }
+
+        function draw() {
+            // Limpiar Lienzo
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Dibujar Líneas del campo (Estilo Neón Alternativo)
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+            ctx.lineWidth = 4;
+            
+            // Línea central
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2);
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.stroke();
+
+            // Círculo central
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, canvas.height / 2, 60, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Porterías (Líneas visuales de fondo)
+            ctx.strokeStyle = "#ff007f";
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, 0, goalWidth / 2, 0, Math.PI);
+            ctx.stroke();
+
+            ctx.strokeStyle = "#00f2fe";
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, canvas.height, goalWidth / 2, Math.PI, 0);
+            ctx.stroke();
+
+            // 2. Dibujar Disco (Puck)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#ffffff";
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(puck.x, puck.y, puckRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // Reset de sombras
+
+            // 3. Dibujar Mazo IA (Arriba - Rojo/Rosa)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#ff007f";
+            ctx.fillStyle = "#ff007f";
+            ctx.beginPath();
+            ctx.arc(cpu.x, cpu.y, malletRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Detalle interior del mazo IA
+            ctx.fillStyle = "#ffe6f2";
+            ctx.beginPath();
+            ctx.arc(cpu.x, cpu.y, malletRadius * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 4. Dibujar Mazo Jugador (Abajo - Azul/Cian)
+            ctx.shadowColor = "#00f2fe";
+            ctx.fillStyle = "#00f2fe";
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, malletRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Detalle interior del mazo jugador
+            ctx.fillStyle = "#e6ffff";
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, malletRadius * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0; // Desactivar sombras al final
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
